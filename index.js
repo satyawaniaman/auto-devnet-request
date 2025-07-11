@@ -1,5 +1,5 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import cron from 'node-cron';
+import express from 'express';
 import axios from 'axios';
 import winston from 'winston';
 
@@ -8,8 +8,7 @@ const TARGET_ADDRESS = '2gAwqZmY7nRi9XCNQs3CjfSzDiVe5npwK3yS7ijo3E8h';
 const DEVNET_RPC_URL = 'https://api.devnet.solana.com';
 const FAUCET_URL = 'https://faucet.solana.com/api/airdrop';
 const SOL_AMOUNT = 5; // 5 SOL per request
-const MAX_REQUESTS_PER_SESSION = 2;
-const INTERVAL_HOURS = 8;
+const PORT = process.env.PORT || 10000;
 
 // Setup logger
 const logger = winston.createLogger({
@@ -29,8 +28,19 @@ const logger = winston.createLogger({
 // Initialize Solana connection
 const connection = new Connection(DEVNET_RPC_URL, 'confirmed');
 
-// Track request count for current session
-let requestCount = 0;
+// Initialize Express app
+const app = express();
+app.use(express.json());
+
+// Track statistics
+let stats = {
+  totalRequests: 0,
+  successfulRequests: 0,
+  failedRequests: 0,
+  lastRequestTime: null,
+  lastSuccessTime: null,
+  uptime: Date.now()
+};
 
 /**
  * Validate the target address
@@ -121,61 +131,201 @@ async function requestAirdrop(address, amount = 1) {
  * Main function to request SOL with fallback methods
  */
 async function requestSol() {
-  if (requestCount >= MAX_REQUESTS_PER_SESSION) {
-    logger.info(`Maximum requests (${MAX_REQUESTS_PER_SESSION}) reached for this session. Waiting for next cycle.`);
-    return;
-  }
-
-  requestCount++;
-  logger.info(`\n🚀 Starting request #${requestCount} of ${MAX_REQUESTS_PER_SESSION}`);
+  stats.totalRequests++;
+  stats.lastRequestTime = new Date().toISOString();
   
-  // Check current balance
-  const currentBalance = await getBalance(TARGET_ADDRESS);
-  if (currentBalance !== null) {
-    logger.info(`Current balance: ${currentBalance.toFixed(4)} SOL`);
-  }
-
-  // Try faucet API first
-  let result = await requestDevnetSol(TARGET_ADDRESS, SOL_AMOUNT);
+  logger.info(`🚀 Starting SOL request #${stats.totalRequests}`);
   
-  // If faucet fails, try direct airdrop (usually limited to 1-2 SOL)
-  if (!result.success) {
-    logger.info('Faucet API failed, trying direct airdrop method...');
-    result = await requestAirdrop(TARGET_ADDRESS, Math.min(SOL_AMOUNT, 2)); // Airdrop usually limited to 2 SOL
-  }
+  try {
+    // Check current balance
+    const currentBalance = await getBalance(TARGET_ADDRESS);
+    if (currentBalance !== null) {
+      logger.info(`Current balance: ${currentBalance.toFixed(4)} SOL`);
+    }
 
-  if (result.success) {
-    // Check new balance after a short delay
-    setTimeout(async () => {
-      const newBalance = await getBalance(TARGET_ADDRESS);
-      if (newBalance !== null) {
-        logger.info(`New balance: ${newBalance.toFixed(4)} SOL`);
-        const gained = currentBalance !== null ? newBalance - currentBalance : 'Unknown';
-        logger.info(`SOL gained: ${typeof gained === 'number' ? gained.toFixed(4) : gained}`);
-      }
-    }, 5000);
-  }
+    // Try faucet API first
+    let result = await requestDevnetSol(TARGET_ADDRESS, SOL_AMOUNT);
+    
+    // If faucet fails, try direct airdrop (usually limited to 1-2 SOL)
+    if (!result.success) {
+      logger.info('Faucet API failed, trying direct airdrop method...');
+      result = await requestAirdrop(TARGET_ADDRESS, Math.min(SOL_AMOUNT, 2)); // Airdrop usually limited to 2 SOL
+    }
 
-  logger.info(`Request #${requestCount} completed. Next request in ${INTERVAL_HOURS} hours.\n`);
+    if (result.success) {
+      stats.successfulRequests++;
+      stats.lastSuccessTime = new Date().toISOString();
+      
+      // Check new balance after a short delay
+      setTimeout(async () => {
+        const newBalance = await getBalance(TARGET_ADDRESS);
+        if (newBalance !== null) {
+          logger.info(`New balance: ${newBalance.toFixed(4)} SOL`);
+          const gained = currentBalance !== null ? newBalance - currentBalance : 'Unknown';
+          logger.info(`SOL gained: ${typeof gained === 'number' ? gained.toFixed(4) : gained}`);
+        }
+      }, 5000);
+      
+      return {
+        success: true,
+        message: 'SOL request completed successfully',
+        signature: result.signature,
+        currentBalance,
+        requestedAmount: result.signature ? SOL_AMOUNT : Math.min(SOL_AMOUNT, 2)
+      };
+    } else {
+      stats.failedRequests++;
+      return {
+        success: false,
+        message: 'SOL request failed',
+        error: result.error,
+        currentBalance
+      };
+    }
+  } catch (error) {
+    stats.failedRequests++;
+    logger.error(`Request failed with error: ${error.message}`);
+    return {
+      success: false,
+      message: 'SOL request failed with error',
+      error: error.message
+    };
+  }
 }
 
+// API Routes
+
 /**
- * Reset request counter for new session
+ * GET / - Status and statistics
  */
-function resetRequestCounter() {
-  requestCount = 0;
-  logger.info(`🔄 Request counter reset. Starting new session.`);
-}
+app.get('/', async (req, res) => {
+  try {
+    const currentBalance = await getBalance(TARGET_ADDRESS);
+    res.json({
+      status: 'running',
+      program: 'Auto Devnet SOL Request Service',
+      address: TARGET_ADDRESS,
+      solAmount: SOL_AMOUNT,
+      currentBalance: currentBalance ? currentBalance.toFixed(4) : 'Unknown',
+      statistics: {
+        ...stats,
+        uptime: Math.floor((Date.now() - stats.uptime) / 1000),
+        successRate: stats.totalRequests > 0 ? ((stats.successfulRequests / stats.totalRequests) * 100).toFixed(2) + '%' : '0%'
+      },
+      endpoints: {
+        'POST /request': 'Trigger SOL request',
+        'GET /health': 'Health check',
+        'GET /balance': 'Get current balance',
+        'GET /stats': 'Get detailed statistics'
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to get status',
+      message: error.message
+    });
+  }
+});
 
 /**
- * Initialize the program
+ * POST /request - Trigger SOL request
+ */
+app.post('/request', async (req, res) => {
+  try {
+    logger.info('📡 SOL request triggered via API');
+    const result = await requestSol();
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        data: {
+          signature: result.signature,
+          requestedAmount: result.requestedAmount,
+          currentBalance: result.currentBalance ? result.currentBalance.toFixed(4) : 'Unknown',
+          timestamp: new Date().toISOString()
+        },
+        statistics: stats
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: result.message,
+        error: result.error,
+        data: {
+          currentBalance: result.currentBalance ? result.currentBalance.toFixed(4) : 'Unknown',
+          timestamp: new Date().toISOString()
+        },
+        statistics: stats
+      });
+    }
+  } catch (error) {
+    logger.error(`API request failed: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /health - Health check
+ */
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor((Date.now() - stats.uptime) / 1000)
+  });
+});
+
+/**
+ * GET /balance - Get current SOL balance
+ */
+app.get('/balance', async (req, res) => {
+  try {
+    const balance = await getBalance(TARGET_ADDRESS);
+    res.json({
+      address: TARGET_ADDRESS,
+      balance: balance ? balance.toFixed(4) : 'Unknown',
+      balanceSOL: balance,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to get balance',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /stats - Get detailed statistics
+ */
+app.get('/stats', (req, res) => {
+  res.json({
+    statistics: {
+      ...stats,
+      uptime: Math.floor((Date.now() - stats.uptime) / 1000),
+      successRate: stats.totalRequests > 0 ? ((stats.successfulRequests / stats.totalRequests) * 100).toFixed(2) + '%' : '0%'
+    },
+    configuration: {
+      targetAddress: TARGET_ADDRESS,
+      solAmount: SOL_AMOUNT,
+      devnetRpcUrl: DEVNET_RPC_URL
+    }
+  });
+});
+
+/**
+ * Initialize the server
  */
 async function initialize() {
-  logger.info('🌟 Auto Devnet SOL Request Program Started');
+  logger.info('🌟 Auto Devnet SOL Request Service Started');
   logger.info(`Target Address: ${TARGET_ADDRESS}`);
   logger.info(`SOL Amount per request: ${SOL_AMOUNT}`);
-  logger.info(`Requests per session: ${MAX_REQUESTS_PER_SESSION}`);
-  logger.info(`Interval: Every ${INTERVAL_HOURS} hours`);
   logger.info('=' .repeat(60));
 
   // Validate address
@@ -190,21 +340,14 @@ async function initialize() {
     logger.info(`Initial balance: ${initialBalance.toFixed(4)} SOL`);
   }
 
-  // Make first request immediately
-  await requestSol();
-
-  // Schedule requests every 8 hours
-  cron.schedule(`0 */${INTERVAL_HOURS} * * *`, async () => {
-    await requestSol();
+  // Start HTTP server
+  app.listen(PORT, '0.0.0.0', () => {
+    logger.info(`🌐 HTTP server running on port ${PORT}`);
+    logger.info(`📡 Trigger SOL requests via: POST /request`);
+    logger.info(`📊 View status at: GET /`);
+    logger.info(`🔍 Health check at: GET /health`);
+    logger.info('Ready to receive cron job requests!');
   });
-
-  // Reset counter every 24 hours (3 cycles of 8 hours)
-  cron.schedule('0 0 * * *', () => {
-    resetRequestCounter();
-  });
-
-  logger.info(`⏰ Scheduler started. Next request in ${INTERVAL_HOURS} hours.`);
-  logger.info('Press Ctrl+C to stop the program.');
 }
 
 // Handle graceful shutdown

@@ -1,26 +1,30 @@
 {
   "name": "auto-devnet-request",
-  "version": "1.0.0",
-  "description": "Automated Solana devnet SOL faucet requests",
+  "version": "2.0.0",
+  "description": "Solana Devnet SOL faucet request service with HTTP API for external cron jobs",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
+    "dev": "node index.js",
     "test": "node test.js"
-  },
-  "dependencies": {
-    "@solana/web3.js": "1.98.2",
-    "node-cron": "^3.0.3",
-    "axios": "^1.6.0",
-    "winston": "3.17.0"
   },
   "keywords": [
     "solana",
     "devnet",
     "faucet",
-    "automation"
+    "api",
+    "sol",
+    "airdrop",
+    "cron",
+    "service"
   ],
-  "author": "",
-  "license": "MIT"
+  "author": "Auto Devnet Request",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.95.2",
+    "axios": "^1.7.7",
+    "winston": "^3.14.2",
+    "express": "^4.21.1"
+  }
 }
