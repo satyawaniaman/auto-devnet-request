@@ -1,0 +1,26 @@
+{
+  "name": "auto-devnet-request",
+  "version": "1.0.0",
+  "description": "Automated Solana devnet SOL faucet requests",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "1.98.2",
+    "node-cron": "^3.0.3",
+    "axios": "^1.6.0",
+    "winston": "3.17.0"
+  },
+  "keywords": [
+    "solana",
+    "devnet",
+    "faucet",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT"
+}
