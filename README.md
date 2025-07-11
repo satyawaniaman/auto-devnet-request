@@ -199,38 +199,51 @@ const INTERVAL_HOURS = 8;
 
 ## 🚀 Deployment Options
 
-### Option 1: Render Background Worker (Recommended)
+### Render Deployment (Recommended)
 
-1. **Create a new Background Worker** (not Web Service) on Render
-2. **Connect your repository**
-3. **Use these settings**:
-   - **Build Command**: `pnpm install`
-   - **Start Command**: `pnpm start`
-   - **Environment Variables**:
-     - `NODE_ENV=production`
-     - `RENDER=true`
+#### Step 1: Deploy the Service
+1. **Connect Repository**: Link your GitHub repository to Render
+2. **Service Type**: Choose "Web Service"
+3. **Build Command**: `pnpm install`
+4. **Start Command**: `pnpm start`
+5. **Environment Variables**: 
+   - `PORT`: Will be automatically set by Render
+   - Add any custom environment variables if needed
 
-### Option 2: Render Web Service (with HTTP endpoints)
+#### Step 2: Set Up External Cron Job
+Since Render doesn't have built-in cron jobs for the free tier, use one of these options:
 
-If you accidentally created a Web Service:
-1. The program will automatically create HTTP endpoints for monitoring
-2. Access `https://your-app.onrender.com/` for status
-3. Access `https://your-app.onrender.com/health` for health checks
+**Option A: External Cron Service (Recommended)**
+- Use services like [cron-job.org](https://cron-job.org) or [EasyCron](https://www.easycron.com)
+- Set up a cron job to hit: `POST https://your-app.onrender.com/request`
+- Schedule: Every 8 hours (`0 */8 * * *`)
 
-### Option 3: Docker Deployment
+**Option B: GitHub Actions (Free)**
+Add this workflow file to `.github/workflows/cron.yml`:
+```yaml
+name: SOL Request Cron
+on:
+  schedule:
+    - cron: '0 */8 * * *'  # Every 8 hours
+  workflow_dispatch:  # Manual trigger
 
-```bash
-# Build the image
-docker build -t auto-devnet-request .
-
-# Run the container
-docker run -d --name devnet-sol-request auto-devnet-request
-
-# View logs
-docker logs -f devnet-sol-request
+jobs:
+  request-sol:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger SOL Request
+        run: |
+          curl -X POST ${{ secrets.SERVICE_URL }}/request
 ```
+Then add your service URL as a secret: `SERVICE_URL=https://your-app.onrender.com`
 
-### Option 4: Local Development
+**Option C: Render Cron Jobs (Paid Plans)**
+If you have a paid Render plan, you can create a separate Cron Job service:
+- **Service Type**: Cron Job
+- **Schedule**: `0 */8 * * *`
+- **Command**: `curl -X POST https://your-app.onrender.com/request`
+
+### Local Development
 
 ```bash
 # Install dependencies
@@ -239,45 +252,72 @@ pnpm install
 # Run tests
 pnpm test
 
-# Start the program
+# Start the service
 pnpm start
+
+# Development mode
+pnpm run dev
 ```
 
-## 🔧 Troubleshooting Render Deployment
+## 🔧 Troubleshooting
 
-### Issue: "No open ports detected"
+### Render Deployment Issues
 
-**Problem**: Render Web Services expect HTTP traffic on a port.
+**Issue**: Service fails to start
+- **Solution**: Check build logs for dependency installation errors
+- **Verify**: Ensure `pnpm start` is set as the start command
+- **Check**: Verify all dependencies are in `package.json`
 
-**Solutions**:
-1. **Best**: Delete the Web Service and create a **Background Worker** instead
-2. **Alternative**: Keep as Web Service - the program will auto-create HTTP endpoints
+**Issue**: External cron job not working
+- **Solution**: Verify the service URL is correct and accessible
+- **Test**: Try manually calling `POST /request` endpoint
+- **Check**: Ensure the service is running and not sleeping (Render free tier)
 
-### Issue: Deployment stuck at "Deploying..."
+**Issue**: Service goes to sleep (Free tier)
+- **Solution**: Use external cron services to keep it active
+- **Alternative**: Upgrade to paid plan for always-on services
 
-**Causes & Solutions**:
-- **Port binding timeout**: Use Background Worker service type
-- **Long-running process**: This is expected behavior for scheduled tasks
-- **Resource limits**: Upgrade from Free tier if needed
+### API Issues
 
-### Issue: Faucet requests failing
+**Issue**: POST /request returns errors
+- **Solution**: Check service logs for detailed error messages
+- **Common cause**: Invalid Solana address or network connectivity
+- **Verify**: Test other endpoints like GET /health first
 
-**Expected behavior**: Devnet faucets have rate limits and may be temporarily unavailable. The program includes:
-- Automatic fallback methods
-- Retry logic with exponential backoff
-- Comprehensive error logging
+### Rate Limiting
+
+**Issue**: "429 Too Many Requests"
+- **Expected behavior**: Solana devnet has rate limits
+- **Solution**: The program includes exponential backoff and will retry
+- **Note**: This is normal and requests will eventually succeed
+
+### Network Issues
+
+**Issue**: Connection timeouts
+- **Solution**: Check internet connectivity and Solana devnet status
+- **Alternative**: The program will automatically retry failed requests
+- **Monitor**: Use GET /stats to track success rates
 
 ## 📊 Monitoring & Status
 
-### HTTP Endpoints (when deployed as Web Service)
+### Real-time Monitoring
+- **API Endpoints**: Use GET / for service status and statistics
+- **Console Logs**: Real-time status updates
+- **File Logs**: Persistent logging in `devnet-requests.log`
+- **Balance Tracking**: Real-time balance via GET /balance
+- **Success Rate**: Track successful vs failed requests via GET /stats
 
-- **Status**: `GET /` - Program status and statistics
-- **Health**: `GET /health` - Health check endpoint
+### Health Checks
+- **Health Endpoint**: `GET /health` for service health
+- **Status Endpoint**: `GET /` for comprehensive status
+- **Balance Endpoint**: `GET /balance` for current SOL balance
+- **Statistics Endpoint**: `GET /stats` for detailed metrics
 
-### Log Files
-
-- **Console**: Real-time output in deployment logs
-- **File**: `devnet-requests.log` (local development only)
+### Performance Metrics
+- **Request Success Rate**: Percentage of successful SOL requests
+- **Total Requests**: Count of all API-triggered requests
+- **Uptime Tracking**: Service availability since startup
+- **Error Rate Analysis**: Types and frequency of errors
 
 ## 🔒 Security Considerations
 
